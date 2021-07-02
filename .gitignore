@@ -63,3 +63,4 @@ example/daqtest-static
 
 # Other things
 *.swp
+.DS_Store

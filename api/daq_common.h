@@ -1,5 +1,4 @@
 /*
-** Copyright (C) 2014-2021 Cisco and/or its affiliates. All rights reserved.
 ** Copyright (C) 2010-2013 Sourcefire, Inc.
 ** Author: Michael R. Altizer <mialtize@cisco.com>
 **
@@ -22,19 +21,35 @@
 #ifndef _DAQ_COMMON_H
 #define _DAQ_COMMON_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include <netinet/in.h>
-#include <sys/time.h>
 #include <stdint.h>
 #include <unistd.h>
-
-// Comprehensive version number covering all elements of this header
-#define DAQ_COMMON_API_VERSION  0x00030003
+#ifndef WIN32
+#include <netinet/in.h>
+#include <sys/time.h>
+#else
+/* for struct timeavl */
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#endif
 
 #ifndef DAQ_SO_PUBLIC
+#if defined _WIN32 || defined __CYGWIN__
+#  if defined DAQ_DLL
+#    ifdef __GNUC__
+#      define DAQ_SO_PUBLIC __attribute__((dllexport))
+#    else
+#      define DAQ_SO_PUBLIC __declspec(dllexport)
+#    endif
+#  else
+#    ifdef __GNUC__
+#      define DAQ_SO_PUBLIC __attribute__((dllimport))
+#    else
+#      define DAQ_SO_PUBLIC __declspec(dllimport)
+#    endif
+#  endif
+#  define DLL_LOCAL
+#else
 #  ifdef HAVE_VISIBILITY
 #    define DAQ_SO_PUBLIC  __attribute__ ((visibility("default")))
 #    define DAQ_SO_PRIVATE __attribute__ ((visibility("hidden")))
@@ -43,15 +58,17 @@ extern "C" {
 #    define DAQ_SO_PRIVATE
 #  endif
 #endif
+#endif
 
-#define DAQ_LINKAGE DAQ_SO_PUBLIC
-
-typedef const struct _daq_module_api *DAQ_Module_h;
-typedef struct _daq_module_config *DAQ_ModuleConfig_h;
-typedef struct _daq_config *DAQ_Config_h;
-typedef struct _daq_instance *DAQ_Instance_h;
-typedef struct _daq_module_instance *DAQ_ModuleInstance_h;
-typedef const struct _daq_msg *DAQ_Msg_h;
+#ifdef _WIN32
+# ifdef DAQ_DLL
+#  define DAQ_LINKAGE DAQ_SO_PUBLIC
+# else
+#  define DAQ_LINKAGE
+# endif
+#else
+# define DAQ_LINKAGE DAQ_SO_PUBLIC
+#endif
 
 #define DAQ_SUCCESS          0  /* Success! */
 #define DAQ_ERROR           -1  /* Generic error */
@@ -63,276 +80,246 @@ typedef const struct _daq_msg *DAQ_Msg_h;
 #define DAQ_ERROR_INVAL     -7  /* Invalid argument/request error */
 #define DAQ_ERROR_EXISTS    -8  /* Argument or device already exists */
 #define DAQ_ERROR_AGAIN     -9  /* Try again */
+#define DAQ_READFILE_EOF    -42 /* Hit the end of the file being read! */
 
-typedef enum
-{
-    DAQ_RSTAT_OK = 0,
-    DAQ_RSTAT_WOULD_BLOCK,
-    DAQ_RSTAT_TIMEOUT,
-    DAQ_RSTAT_EOF,
-    DAQ_RSTAT_INTERRUPTED,
-    DAQ_RSTAT_NOBUF,
-    DAQ_RSTAT_ERROR,
-    DAQ_RSTAT_INVALID,
-    MAX_DAQ_RSTAT
-} DAQ_RecvStatus;
-
-typedef enum
-{
-    DAQ_MSG_TYPE_PACKET = 1,    /* Packet data */
-    DAQ_MSG_TYPE_PAYLOAD,       /* Payload data */
-    DAQ_MSG_TYPE_SOF,           /* Start of Flow statistics */
-    DAQ_MSG_TYPE_EOF,           /* End of Flow statistics */
-    DAQ_MSG_TYPE_HA_STATE,      /* HA State blob */
-    LAST_BUILTIN_DAQ_MSG_TYPE = 1024,   /* End of reserved space for "official" DAQ message types.
-                                           Any externally defined message types should be larger than this. */
-    MAX_DAQ_MSG_TYPE = UINT16_MAX
-} DAQ_MsgType;
-
-/* NOTE: The internals of this message structure are only visible for performance reasons and
-    for use by DAQ modules.  Applications should use the pseudo-opaque DAQ_Msg_h and the inline
-    accessor functions (daq_msg_*) from daq.h. */
-
-/* The DAQ message structure.  Ordered by element size to avoid padding. */
-#define DAQ_MSG_META_SLOTS  8
-typedef struct _daq_msg
-{
-    void *hdr;                      /* Pointer to the message header structure for this message */
-    uint8_t *data;                  /* Pointer to the variable-length message data (Optional) */
-    void *meta[DAQ_MSG_META_SLOTS]; /* Dynamic message metadata slots */
-    DAQ_ModuleInstance_h owner;     /* Handle for the module instance this message belongs to */
-    void *priv;                     /* Pointer to module instance's private data for this message (Optional) */
-    size_t hdr_len;                 /* Length of the header structure pointed to by 'hdr' */
-    DAQ_MsgType type;               /* Message type (one of DAQ_MsgType or from the user-defined range) */
-    uint32_t data_len;              /* Length of the data pointed to by 'data'.  Should be 0 if 'data' is NULL */
-} DAQ_Msg_t;
-
-/* The DAQ packet header structure. */
-#define DAQ_PKT_FLAG_OPAQUE_IS_VALID    0x0001  /* The DAQ module actively set the opaque value in the DAQ packet header. */
-#define DAQ_PKT_FLAG_NOT_FORWARDING     0x0002  /* The DAQ module will not be actively forwarding this packet
+#define DAQ_PKT_FLAG_HW_TCP_CS_GOOD     0x000001 /* The DAQ module reports that the checksum for this packet is good. */
+#define DAQ_PKT_FLAG_OPAQUE_IS_VALID    0x000002 /* The DAQ module actively set the opaque value in the DAQ packet header. */
+#define DAQ_PKT_FLAG_NOT_FORWARDING     0x000004 /* The DAQ module will not be actively forwarding this packet
                                                     regardless of the verdict (e.g, Passive or Inline Tap interfaces). */
-#define DAQ_PKT_FLAG_PRE_ROUTING        0x0004  /* The packet is being routed via us but packet modifications
+#define DAQ_PKT_FLAG_PRE_ROUTING        0x000008 /* The packet is being routed via us but packet modifications
                                                     (MAC and TTL) have not yet been made. */
-#define DAQ_PKT_FLAG_IGNORE_VLAN        0x0008  /* Ignore vlan tags in the packet */
-#define DAQ_PKT_FLAG_FLOWID_IS_VALID    0x0010  /* The DAQ module actively set the flow ID value in the DAQ packet header. */
-#define DAQ_PKT_FLAG_LOCALLY_DESTINED   0x0020  /* The packet is destined for local delivery */
-#define DAQ_PKT_FLAG_LOCALLY_ORIGINATED 0x0040  /* The packet was originated locally */
-#define DAQ_PKT_FLAG_SCRUBBED_TCP_OPTS  0x0080  /* Scrubbed tcp options may be available */
-#define DAQ_PKT_FLAG_HA_STATE_AVAIL     0x0100  /* HA State is availble for the flow this packet is associated with. */
-#define DAQ_PKT_FLAG_ERROR_PACKET       0x0200  /* Lower level reports that the packet has errors. */
-#define DAQ_PKT_FLAG_TRACE_ENABLED      0x0400  /* Tracing due to packet trace or capture with trace */
-#define DAQ_PKT_FLAG_SIMULATED          0x0800  /* Packet is simulated/virtual */
-#define DAQ_PKT_FLAG_NEW_FLOW           0x1000  /* The packet was the first of a new flow. */
-#define DAQ_PKT_FLAG_REV_FLOW           0x2000  /* The packet is going the reverse direction of the flow initiator.*/
-#define DAQ_PKT_FLAG_DEBUG_ENABLED      0x4000  /* The packet has been flagged for debugging by the lower layer. */
-#define DAQ_PKT_FLAG_SIGNIFICANT_GROUPS 0x8000  /* Interface groups should be used for flow classification. */
+#define DAQ_PKT_FLAG_SSL_DETECTED       0x000010 /* Packet is ssl client hello */
+#define DAQ_PKT_FLAG_SSL_SHELLO         0x000020 /* Packet is ssl server hello */
+#define DAQ_PKT_FLAG_SSL_SERVER_KEYX    0x000040 /* Packet is ssl server keyx */
+#define DAQ_PKT_FLAG_SSL_CLIENT_KEYX    0x000080 /* Packet is ssl client keyx */
+#define DAQ_PKT_FLAG_IGNORE_VLAN        0x000100 /* Ignore vlan tags in the packet */
+#define DAQ_PKT_FLAG_REAL_ADDRESSES     0x000200 /* The real address values in the header are valid */
+#define DAQ_PKT_FLAG_REAL_SIP_V6        0x000400 /* The real source address is IPv6 */
+#define DAQ_PKT_FLAG_REAL_DIP_V6        0x000800 /* The real destination address is IPv6 */
+#define DAQ_PKT_FLAG_FLOWID_IS_VALID    0x001000 /* The DAQ module actively set the flow ID value in the DAQ packet header. */
+#define DAQ_PKT_FLAG_LOCALLY_DESTINED   0x002000 /* The packet is destined for local delivery */
+#define DAQ_PKT_FLAG_LOCALLY_ORIGINATED 0x004000 /* The packet was originated locally */
+#define DAQ_PKT_FLAG_SCRUBBED_TCP_OPTS  0x008000 /* Scrubbed tcp options maybe available */
+#define DAQ_PKT_FLAG_HA_STATE_AVAIL     0x010000 /* HA State is availble for the flow this packet is associated with. */
+#define DAQ_PKT_FLAG_ERROR_PACKET       0x020000 /* Lower level reports that the packet has errors. */
+#define DAQ_PKT_FLAG_RETRY_PACKET       0x040000 /* Packet is from the retry queue. */
+#define DAQ_PKT_FLAG_TRACE_ENABLED      0x080000 /* Tracing due to packet trace or capture with trace */
+#define DAQ_PKT_FLAG_SIMULATED          0x100000 /* Packet is simulated/virtual */
 
+/* The DAQ packet header structure passed to DAQ Analysis Functions.
+ * This should NEVER be modified by user applications. */
 #define DAQ_PKTHDR_UNKNOWN  -1  /* Ingress or Egress not known */
 #define DAQ_PKTHDR_FLOOD    -2  /* Egress is flooding */
-typedef struct _daq_pkt_hdr
+typedef struct _daq_pkthdr
 {
-    struct timeval ts;          /* Timestamp */
-    uint32_t pktlen;            /* Original length of this packet (off the wire) */
-    int32_t ingress_index;      /* Index of the inbound interface. */
-    int32_t egress_index;       /* Index of the outbound interface. */
-    int16_t ingress_group;      /* Index of the inbound group. */
-    int16_t egress_group;       /* Index of the outbound group. */
-    uint32_t opaque;            /* Opaque context value from the DAQ module or underlying hardware.
-                                    Directly related to the opaque value in DAQ_FlowStats_t. */
-    uint32_t flow_id;           /* Flow ID value provided from the DAQ module or underlying hardware. */
-    uint32_t flags;             /* Flags for the packet (DAQ_PKT_FLAG_*) */
-    uint16_t address_space_id;  /* Unique ID of the address space */
+    struct timeval ts;      /* Timestamp */
+    uint32_t caplen;        /* Length of the portion present */
+    uint32_t pktlen;        /* Length of this packet (off wire) */
+    int32_t ingress_index;  /* Index of the inbound interface. */
+    int32_t egress_index;   /* Index of the outbound interface. */
+    int32_t ingress_group;  /* Index of the inbound group. */
+    int32_t egress_group;   /* Index of the outbound group. */
+    uint32_t flags;         /* Flags for the packet (DAQ_PKT_FLAG_*) */
+    uint32_t opaque;        /* Opaque context value from the DAQ module or underlying hardware.
+                               Directly related to the opaque value in FlowStats. */
+    void *priv_ptr;         /* Private data pointer */
+    uint32_t flow_id;       /* Flow ID value provided from the DAQ module or underlying hardware. */
+    uint16_t address_space_id; /* Unique ID of the address space */
+
+    /* Real values for NAT'ed connections */
+    struct in6_addr real_sIP;
+    struct in6_addr real_dIP;
+    uint16_t n_real_sPort;
+    uint16_t n_real_dPort;
 } DAQ_PktHdr_t;
 
-#define DAQ_PKT_META_NAPT_INFO      0
-#define DAQ_PKT_META_DECODE_DATA    1
-#define DAQ_PKT_META_TCP_ACK_DATA   2
 
-/* "Real" address and port information for Network Address and Port Translated (NAPT'd) connections.
-    This represents the destination addresses and ports seen on egress in both directions. */
-#define DAQ_NAPT_INFO_FLAG_SIP_V6   0x01    /* The source address is IPv6 */
-#define DAQ_NAPT_INFO_FLAG_DIP_V6   0x02    /* The destination address is IPv6 */
-typedef struct _daq_napt_info
-{
-    struct in6_addr src_addr;
-    struct in6_addr dst_addr;
-    uint16_t src_port;
-    uint16_t dst_port;
-    uint8_t flags;
-    uint8_t ip_layer;
-} DAQ_NAPTInfo_t;
-
-/* Decoded packet information parsed from the Packet message's data.  Currently, all fields refer
-    to the first protocol of each layer encountered (no information is conveyed about encapsulated
-    duplicate protocols like IP-in-IP).  The offsets for layers not found are set to
-    DAQ_PKT_DECODE_OFFSET_INVALID. */
-typedef union _daq_pkt_decode_flags
-{
-    uint32_t all;
-
-    struct
-    {
-        uint32_t l2:1;              /* Parsed known L2 protocol */
-        uint32_t l2_checksum:1;     /* L2 checksum was calculated and validated. */
-        uint32_t l3:1;              /* Parsed known L3 protocol */
-        uint32_t l3_checksum:1;     /* L3 checksum was calculated and validated. */
-        uint32_t l4:1;              /* Parsed known L4 protocol */
-        uint32_t l4_checksum:1;     /* L4 checksum was calculated and validated. */
-
-        uint32_t checksum_error:1;  /* One or more checksum errors were encountered during parsing. */
-
-        uint32_t vlan:1;            /* Parsed VLAN header */
-        uint32_t vlan_qinq:1;       /* Stacked VLAN header (QinQ) found and parsed */
-
-        /* Well-known L2 protocols (found and parsed) */
-        uint32_t ethernet:1;        /* Ethernet II */
-
-        /* Well-known L3 protocols (found and parsed) */
-        uint32_t ipv4:1;            /* IPv4 */
-        uint32_t ipv6:1;            /* IPv6 */
-
-        /* Well-known L4 protocols (found and parsed) */
-        uint32_t udp:1;             /* UDP */
-        uint32_t tcp:1;             /* TCP */
-        uint32_t icmp:1;            /* ICMP */
-
-        /* Decoded TCP observations */
-        uint32_t tcp_opt_mss:1;     /* TCP Option MSS seen */
-        uint32_t tcp_opt_ws:1;      /* TCP Option Window Scale seen */
-        uint32_t tcp_opt_ts:1;      /* TCP Option Timestamp seen */
-    } bits;
-} DAQ_PktDecodeFlags_t;
-
-#define DAQ_PKT_DECODE_OFFSET_INVALID   0xffff
-typedef struct _daq_pkt_decode_data
-{
-    DAQ_PktDecodeFlags_t flags;
-    uint16_t l2_offset;         /* Start of the first L2 header. */
-    uint16_t l3_offset;         /* Start of the first L3 header. */
-    uint16_t l4_offset;         /* Start of the first L4 header. */
-    uint16_t payload_offset;    /* First byte past all successfully decoded headers. */
-    uint16_t checksum_offset;   /* End of the last decoded header without checksum errors. */
-} DAQ_PktDecodeData_t;
-
-/* Relevant contents of empty TCP ACK packets that have been elided by the dataplane.  This
-    metadata should only be populated on a subsequent TCP data packet on the same flow headed in
-    the opposite direction. */
-typedef struct _daq_pkt_tcp_ack_data
-{
-    uint32_t tcp_ack_seq_num;   /* TCP Ack Number for elided ACK (in network byte order) */
-    uint16_t tcp_window_size;   /* TCP Window Size for elided ACK (in network byte order) */
-} DAQ_PktTcpAckData_t;
-
-typedef struct _daq_flow_desc
-{
-    /* Interface/Flow ID/Address Space Information */
-    int32_t ingress_index;  /* Index of the inbound interface */
-    int32_t egress_index;   /* Index of the outbound interface */
-    int16_t ingress_group;  /* Index of the inbound group */
-    int16_t egress_group;   /* Index of the outbound group */
-    uint32_t flow_id;       /* Flow ID value provided from the DAQ module or underlying hardware. */
-    uint16_t addr_space_id; /* Address space this traffic belongs to */
-    /* L2 Information */
-    uint16_t vlan_tag;
-    /* L3 Information */
-    union
-    {
-        struct in_addr in_addr;
-        struct in6_addr in6_addr;
-    } src_addr;
-    union
-    {
-        struct in_addr in_addr;
-        struct in6_addr in6_addr;
-    } dst_addr;
-    uint8_t family;
-    /* L4 Information */
-    uint8_t protocol;
-    uint16_t src_port;
-    uint16_t dst_port;
-} DAQ_FlowDesc_t;
-
-#define DAQ_PLD_FLAG_REVERSED   0x1 /* L3/L4 addresses/ports are the reverse of the flow desc */
-typedef struct _daq_payload_hdr
-{
-    struct timeval ts;          /* Timestamp */
-    uint32_t flags;             /* Flags for the payload (DAQ_PLD_FLAG_*) */
-    DAQ_FlowDesc_t flow_desc;   /* Description of the flow this payload came from */
-} DAQ_PayloadHdr_t;
-
-/* HA state binary blob descriptor used for DAQ_MSG_TYPE_HA_STATE. */
+/* HA state binary blob descriptor used for DAQ_METAHDR_TYPE_HA_STATE, DAQ_MODFLOW_TYPE_HA_STATE,
+     and DAQ_QUERYFLOW_TYPE_HA_STATE. */
 typedef struct _daq_ha_state_data
 {
     uint32_t length;
     void *data;
 } DAQ_HA_State_Data_t;
 
-#define DAQ_FS_FLAG_SIGNIFICANT_GROUPS 0x1
-#define DAQ_FS_FLAG_LOGGING_OPTIONAL   0x2
 
-/* Flow statistics structure used for DAQ_MSG_TYPE_SOF and DAQ_MSG_TYPE_EOF. */
-typedef struct _daq_flow_stats
+/*
+ * Metapacket callback types and definitions.
+ */
+
+#define DAQ_METAHDR_TYPE_SOF        0   /* Start of Flow statistics */
+#define DAQ_METAHDR_TYPE_EOF        1   /* End of Flow statistics */
+#define DAQ_METAHDR_TYPE_VPN_LOGIN  2   /* VPN login info */
+#define DAQ_METAHDR_TYPE_VPN_LOGOUT 3   /* VPN logout info */
+#define DAQ_METAHDR_TYPE_HA_STATE   4   /* HA State blob */
+typedef struct _daq_metahdr
 {
-    int16_t ingress_group;
-    int16_t egress_group;
-    int32_t ingress_intf;
-    int32_t egress_intf;
+    int type;               /* Type */
+} DAQ_MetaHdr_t;
+
+/* Flow statistics structure used for DAQ_METAHDR_TYPE_SOF and DAQ_METAHDR_TYPE_EOF. */
+typedef struct _flow_stats
+{
+    int32_t ingressZone;
+    int32_t egressZone;
+    int32_t ingressIntf;
+    int32_t egressIntf;
     /* The IP addresses should be IPv6 or IPv6 representation of IPv4 (::FFFF:<ipv4>) */
-    uint8_t initiator_ip[16];
-    uint8_t responder_ip[16];
-    uint16_t initiator_port;
-    uint16_t responder_port;
+    uint8_t initiatorIp[16];
+    uint8_t responderIp[16];
+    uint16_t initiatorPort;
+    uint16_t responderPort;
     uint32_t opaque;
-    uint64_t initiator_pkts;            /* Not populated for SoF stats. */
-    uint64_t responder_pkts;            /* Not populated for SoF stats. */
-    uint64_t initiator_bytes;           /* Not populated for SoF stats. */
-    uint64_t responder_bytes;           /* Not populated for SoF stats. */
+    uint64_t initiatorPkts;         /* Not populated for SoF stats. */
+    uint64_t responderPkts;         /* Not populated for SoF stats. */
+    uint64_t initiatorBytes;        /* Not populated for SoF stats. */
+    uint64_t responderBytes;        /* Not populated for SoF stats. */
     /* QoS related variables */
-    uint64_t initiator_pkts_dropped;    /* Not populated for SoF stats. */
-    uint64_t responder_pkts_dropped;    /* Not populated for SoF stats. */
-    uint64_t initiator_bytes_dropped;   /* Not populated for SoF stats. */
-    uint64_t responder_bytes_dropped;   /* Not populated for SoF stats. */
-    uint8_t is_qos_applied_on_src_intf; /* Not populated for SoF stats. */
+    uint64_t initiatorPktsDropped;  /* Not populated for SoF stats. */
+    uint64_t responderPktsDropped;  /* Not populated for SoF stats. */
+    uint64_t initiatorBytesDropped; /* Not populated for SoF stats. */
+    uint64_t responderBytesDropped; /* Not populated for SoF stats. */
+    uint8_t isQoSAppliedOnSrcIntf;  /* Not populated for SoF stats. */
     struct timeval sof_timestamp;
-    struct timeval eof_timestamp;       /* Not populated for SoF stats. */
+    struct timeval eof_timestamp;   /* Not populated for SoF stats. */
     uint16_t vlan_tag;
     uint16_t address_space_id;
     uint8_t protocol;
-    uint8_t flags;
-} DAQ_FlowStats_t;
+} Flow_Stats_t, *Flow_Stats_p;
 
-/* Packet verdicts passed to daq_msg_finalize(). */
+/* VPN session type used by DAQ_VPN_Login_Info_t for DAQ_METAHDR_TYPE_VPN_LOGIN. */
+typedef enum {
+    NP_IDFW_VPN_SESSION_TYPE_UNKNOWN = 0,
+    NP_IDFW_VPN_SESSION_TYPE_RA_IKEV1 = 1,
+    NP_IDFW_VPN_SESSION_TYPE_RA_IKEV2 = 2,
+    NP_IDFW_VPN_SESSION_TYPE_RA_SSLVPN = 3,
+    NP_IDFW_VPN_SESSION_TYPE_RA_SSLVPN_CLIENTLESS = 4,
+    NP_IDFW_VPN_SESSION_TYPE_LAN2LAN_IKEV1 = 5,
+    NP_IDFW_VPN_SESSION_TYPE_LAN2LAN_IKEV2 = 6,
+    NP_IDFW_VPN_SESSION_TYPE_MAX,
+} np_idfw_vpn_session_type_t;
+
+/* VPN logout info used for DAQ_VPN_Login_Info_t and DAQ_METAHDR_TYPE_VPN_LOGOUT. */
+typedef struct _daq_vpn_info
+{
+    uint8_t ip[16];
+    uint32_t id;
+} DAQ_VPN_Info_t, *DAQ_VPN_Info_p;
+
+/* VPN login info used for DAQ_METAHDR_TYPE_VPN_LOGIN. */
+#define DAQ_VPN_INFO_MAX_USER_NAME_LEN  256
+typedef struct _daq_vpn_login_info
+{
+    DAQ_VPN_Info_t info;
+    uint32_t os;
+    np_idfw_vpn_session_type_t type;
+    char user[DAQ_VPN_INFO_MAX_USER_NAME_LEN + 1];
+} DAQ_VPN_Login_Info_t, *DAQ_VPN_Login_Info_p;
+
+/*
+ * Flow modification definitions.
+ */
+
+#define DAQ_MODFLOW_TYPE_OPAQUE         1
+#define DAQ_MODFLOW_TYPE_HA_STATE       2
+#define DAQ_MODFLOW_TYPE_SET_QOS_ID     3
+#define DAQ_MODFLOW_TYPE_PKT_TRACE      4 /* To send verdict reason and trace data */
+#define DAQ_MODFLOW_TYPE_VER_REASON     5 /* To send verdict reason only */
+#define DAQ_MODFLOW_TYPE_PRESERVE_FLOW  6 /* Keep passing packets if Snort goes down */
+typedef struct _daq_modflow
+{
+    int type;
+    uint32_t length;
+    const void *value;
+} DAQ_ModFlow_t;
+
+/* Packet tracing information used for DAQ_MODFLOW_TYPE_PKT_TRACE. */
+typedef struct _daq_modflowpkttrace
+{
+    uint8_t vreason;
+    uint32_t pkt_trace_data_len;
+    uint8_t *pkt_trace_data;
+} DAQ_ModFlowPktTrace_t;
+
+
+/*
+ * Flow querying definitions.
+ */
+
+#define DAQ_QUERYFLOW_TYPE_TCP_SCRUBBED_SYN     1
+#define DAQ_QUERYFLOW_TYPE_TCP_SCRUBBED_SYN_ACK 2
+#define DAQ_QUERYFLOW_TYPE_HA_STATE             3
+typedef struct _daq_queryflow
+{
+    int type;
+    uint32_t length;
+    void *value;
+} DAQ_QueryFlow_t;
+
+/* TCP option flags used by DAQ_TCP_Opts_t. */
 typedef enum
 {
+    DAQ_TCP_OPTS_MSS_CHANGED = 0x01,
+    DAQ_TCP_OPTS_WIN_SCALE_CHANGED = 0x02,
+    DAQ_TCP_OPTS_SACK_CHANGED = 0x04,
+    DAQ_TCP_OPTS_TS_CHANGED = 0x08,
+} DAQ_TCP_Opts_flags_t;
+
+/* This structure contains TCP options before modification by the underlying
+    hardware.  It is used for DAQ_QUERYFLOW_TYPE_TCP_SCRUBBED_SYN and
+    DAQ_QUERYFLOW_TYPE_TCP_SCRUBBED_SYN_ACK. */
+typedef struct daq_tcp_opts_t_
+{
+    uint8_t flags;
+    uint8_t window_scale;
+    uint16_t mss;
+    uint8_t window_scale_position;
+    uint8_t ts_position;
+    uint8_t mss_position;
+    uint8_t sack_ok_position;
+    uint32_t ts_value;
+} DAQ_TCP_Opts_t;
+
+
+/* Packet verdicts returned by DAQ_Analysis_Func_t callbacks. */
+typedef enum {
     DAQ_VERDICT_PASS,       /* Pass the packet. */
     DAQ_VERDICT_BLOCK,      /* Block the packet. */
     DAQ_VERDICT_REPLACE,    /* Pass a packet that has been modified in-place. (No resizing allowed!) */
     DAQ_VERDICT_WHITELIST,  /* Pass the packet and fastpath all future packets in the same flow systemwide. */
     DAQ_VERDICT_BLACKLIST,  /* Block the packet and block all future packets in the same flow systemwide. */
     DAQ_VERDICT_IGNORE,     /* Pass the packet and fastpath all future packets in the same flow for this application. */
+    DAQ_VERDICT_RETRY,      /* Hold the packet briefly and resend it to Snort while Snort waits for external response.
+                               Drop any new packets received on that flow while holding before sending them to Snort. */
     MAX_DAQ_VERDICT
 } DAQ_Verdict;
 
-typedef enum
-{
-    DAQ_MODE_NONE,
+typedef DAQ_Verdict (*DAQ_Analysis_Func_t)(void *user, const DAQ_PktHdr_t *hdr, const uint8_t *data);
+typedef int (*DAQ_Meta_Func_t)(void *user, const DAQ_MetaHdr_t *hdr, const uint8_t *data);
+
+typedef enum {
     DAQ_MODE_PASSIVE,
     DAQ_MODE_INLINE,
     DAQ_MODE_READ_FILE,
     MAX_DAQ_MODE
 } DAQ_Mode;
 
-#define DAQ_VAR_DESC_REQUIRES_ARGUMENT  0x01
-#define DAQ_VAR_DESC_FORBIDS_ARGUMENT   0x02
-typedef struct _daq_variable_desc
-{
-    const char *name;
-    const char *description;
-    uint32_t flags;
-} DAQ_VariableDesc_t;
+#define DAQ_CFG_PROMISC     0x01
 
-typedef enum
+typedef struct _daq_dict_entry DAQ_Dict;
+
+typedef struct _daq_config
 {
+    char *name;         /* Name of the interface(s) or file to be opened */
+    int snaplen;        /* Maximum packet capture length */
+    unsigned timeout;   /* Read timeout for acquire loop in milliseconds (0 = unlimited) */
+    DAQ_Mode mode;      /* Module mode (DAQ_MODE_*) */
+    uint32_t flags;     /* Other configuration flags (DAQ_CFG_*) */
+    DAQ_Dict *values;   /* Dictionary of arbitrary key[:value] string pairs. */
+    char *extra;        /* Miscellaneous configuration data to be passed to the DAQ module */
+} DAQ_Config_t;
+
+typedef enum {
     DAQ_STATE_UNINITIALIZED,
     DAQ_STATE_INITIALIZED,
     DAQ_STATE_STARTED,
@@ -351,13 +338,43 @@ typedef struct _daq_stats
     uint64_t verdicts[MAX_DAQ_VERDICT]; /* Counters of packets handled per-verdict. */
 } DAQ_Stats_t;
 
-typedef struct _daq_msg_pool_info
-{
-    uint32_t size;
-    uint32_t available;
-    size_t mem_size;
-} DAQ_MsgPoolInfo_t;
+#define DAQ_DP_TUNNEL_TYPE_NON_TUNNEL 0
+#define DAQ_DP_TUNNEL_TYPE_GTP_TUNNEL 1
+#define DAQ_DP_TUNNEL_TYPE_MPLS_TUNNEL 2
+#define DAQ_DP_TUNNEL_TYPE_OTHER_TUNNEL 3
 
+typedef struct _DAQ_DP_key_t {
+    uint16_t src_af;                /* AF_INET or AF_INET6 */
+    uint16_t dst_af;                /* AF_INET or AF_INET6 */
+    union {
+        struct in_addr src_ip4;
+        struct in6_addr src_ip6;
+    } sa;
+    union {
+        struct in_addr dst_ip4;
+        struct in6_addr dst_ip6;
+    } da;
+    uint8_t protocol;           /* TCP or UDP (IPPROTO_TCP or IPPROTO_UDP )*/
+    uint16_t src_port;          /* TCP/UDP source port */
+    uint16_t dst_port;          /* TCP/UDP destination port */
+    uint16_t address_space_id;  /* Address Space ID */
+    uint16_t tunnel_type;       /* Tunnel type */
+    uint16_t vlan_id;           /* VLAN ID */
+    uint16_t vlan_cnots;
+} DAQ_DP_key_t;
+
+typedef struct _DAQ_Data_Channel_Params_t
+{
+    unsigned flags;     /* DAQ_DATA_CHANNEL_* flags*/
+    unsigned timeout_ms;/* timeout of the data channel in milliseconds */
+    unsigned length;    /* [Future] length of the data associated with the data channel */
+    uint8_t* data;      /* [Future] opaque data blob to return with the data channel */
+} DAQ_Data_Channel_Params_t;
+
+/* DAQ module data channel flags */
+#define DAQ_DATA_CHANNEL_FLOAT          0x01 /* the data channel can float to a different snort */
+#define DAQ_DATA_CHANNEL_ALLOW_MULTIPLE 0x02 /* allow multiple connections to use the same data channel entry */
+#define DAQ_DATA_CHANNEL_PERSIST        0x04 /* data channel entry persists even if control channel terminates */
 
 /* DAQ module type flags */
 #define DAQ_TYPE_FILE_CAPABLE   0x01    /* can read from a file */
@@ -365,7 +382,6 @@ typedef struct _daq_msg_pool_info
 #define DAQ_TYPE_INLINE_CAPABLE 0x04    /* can form an inline bridge */
 #define DAQ_TYPE_MULTI_INSTANCE 0x08    /* can be instantiated multiple times */
 #define DAQ_TYPE_NO_UNPRIV      0x10    /* can not run unprivileged */
-#define DAQ_TYPE_WRAPPER        0x20    /* must decorate another DAQ module */
 
 /* DAQ module capability flags */
 #define DAQ_CAPA_NONE           0x00000000   /* no capabilities */
@@ -375,243 +391,20 @@ typedef struct _daq_msg_pool_info
 #define DAQ_CAPA_WHITELIST      0x00000008   /* can whitelist flows */
 #define DAQ_CAPA_BLACKLIST      0x00000010   /* can blacklist flows */
 #define DAQ_CAPA_UNPRIV_START   0x00000020   /* can call start() without root privileges */
-#define DAQ_CAPA_INTERRUPT      0x00000040   /* can call interrupt() to abort a receive call early */
+#define DAQ_CAPA_BREAKLOOP      0x00000040   /* can call breakloop() to break acquisition loop */
 #define DAQ_CAPA_BPF            0x00000080   /* can call set_filter() to establish a BPF */
 #define DAQ_CAPA_DEVICE_INDEX   0x00000100   /* can consistently fill the device_index field in DAQ_PktHdr */
 #define DAQ_CAPA_INJECT_RAW     0x00000200   /* injection of raw packets (no layer-2 headers) */
-#define DAQ_CAPA_DECODE_GTP     0x00000400   /* decodes and tracks flows within GTP. */
-#define DAQ_CAPA_DECODE_TEREDO  0x00000800   /* decodes and tracks flows within Teredo. */
-#define DAQ_CAPA_DECODE_GRE     0x00001000   /* decodes and tracks flows within GRE. */
-#define DAQ_CAPA_DECODE_4IN4    0x00002000   /* decodes and tracks flows of IPv4 within IPv4. */
-#define DAQ_CAPA_DECODE_6IN4    0x00004000   /* decodes and tracks flows of IPv6 within IPv4. */
-#define DAQ_CAPA_DECODE_4IN6    0x00008000   /* decodes and tracks flows of IPv4 within IPv6. */
-#define DAQ_CAPA_DECODE_6IN6    0x00010000   /* decodes and tracks flows of IPv6 within IPv6. */
-#define DAQ_CAPA_DECODE_MPLS    0x00020000   /* decodes and tracks flows within MPLS. */
-#define DAQ_CAPA_DECODE_VXLAN   0x00040000   /* decodes and tracks flows within VXLAN. */
+#define DAQ_CAPA_RETRY          0x00000400   /* resend packet to Snort after brief delay. */
+#define DAQ_CAPA_DECODE_GTP     0x00000800   /* decodes and tracks flows within GTP. */
+#define DAQ_CAPA_DECODE_TEREDO  0x00001000   /* decodes and tracks flows within Teredo. */
+#define DAQ_CAPA_DECODE_GRE     0x00002000   /* decodes and tracks flows within GRE. */
+#define DAQ_CAPA_DECODE_4IN4    0x00004000   /* decodes and tracks flows of IPv4 within IPv4. */
+#define DAQ_CAPA_DECODE_6IN4    0x00008000   /* decodes and tracks flows of IPv6 within IPv4. */
+#define DAQ_CAPA_DECODE_4IN6    0x00010000   /* decodes and tracks flows of IPv4 within IPv6. */
+#define DAQ_CAPA_DECODE_6IN6    0x00020000   /* decodes and tracks flows of IPv6 within IPv6. */
+#define DAQ_CAPA_DECODE_MPLS    0x00040000   /* decodes and tracks flows within MPLS. */
 
-/*
- * DAQ I/O Controls (DIOCTLs)
- */
-typedef enum
-{
-    DIOCTL_GET_DEVICE_INDEX = 1,
-    DIOCTL_SET_FLOW_OPAQUE,
-    DIOCTL_SET_FLOW_HA_STATE,
-    DIOCTL_GET_FLOW_HA_STATE,
-    DIOCTL_SET_FLOW_QOS_ID,
-    DIOCTL_SET_PACKET_TRACE_DATA,
-    DIOCTL_SET_PACKET_VERDICT_REASON,
-    DIOCTL_SET_FLOW_PRESERVE,
-    DIOCTL_GET_FLOW_TCP_SCRUBBED_SYN,
-    DIOCTL_GET_FLOW_TCP_SCRUBBED_SYN_ACK,
-    DIOCTL_CREATE_EXPECTED_FLOW,
-    DIOCTL_DIRECT_INJECT_PAYLOAD,
-    DIOCTL_DIRECT_INJECT_RESET,
-    LAST_BUILTIN_DIOCTL_CMD = 1024,     /* End of reserved space for "official" DAQ ioctl commands.
-                                           Any externally defined ioctl commands should be larger than this. */
-    MAX_DIOCTL_CMD = UINT16_MAX
-} DAQ_IoctlCmd;
-
-/*
- * Command: DIOCTL_GET_DEVICE_INDEX
- * Description: Given a device name, query the index (as used in ingress/egress_index) associated with it.
- * Argument: DIOCTL_QueryDeviceIndex
- */
-typedef struct
-{
-    const char *device; // [in] Device name being queried
-    int index;          // [out] Index of the queried device
-} DIOCTL_QueryDeviceIndex;
-
-/*
- * Command: DIOCTL_SET_FLOW_OPAQUE
- * Description: Set a 32-bit opaque value on the flow associated with the DAQ message.
- * Argument: DIOCTL_SetFlowOpaque
- */
-typedef struct
-{
-    DAQ_Msg_h msg;      // [in] Message belonging to the flow to be modified
-    uint32_t value;     // [in] The 32-bit opaque value to be set
-} DIOCTL_SetFlowOpaque;
-
-/*
- * Command: DIOCTL_SET_FLOW_HA_STATE
- * Description: Store a binary HA state blob on the flow associated with the DAQ message.
- * Argument: DIOCTL_FlowHAState
- *
- * Command: DIOCTL_GET_FLOW_HA_STATE
- * Description: Retrieve the binary HA state blob on the flow associated with the DAQ message.
- * Argument: DIOCTL_FlowHAState
- */
-typedef struct
-{
-    DAQ_Msg_h msg;      // [in] Message belonging to the flow to be modified
-    uint8_t *data;      // [in] (SET_FLOW_HA_STATE) / [out] (GET_FLOW_HA_STATE) HA state blob data
-    uint32_t length;    // [in] (SET_FLOW_HA_STATE) / [out] (GET_FLOW_HA_STATE) HA state blob size
-} DIOCTL_FlowHAState;
-
-/*
- * Command: DIOCTL_SET_FLOW_QOS_ID
- * Description: Set the rule ID on the flow associated with the DAQ message.
- * Argument: DIOCTL_SetFlowQosID
- */
-typedef struct
-{
-    DAQ_Msg_h msg;      // [in] Message belonging to the flow to be modified
-    uint64_t qos_id;    // [in] QoS Rule ID (low 32b), QoS Flags (high 32b)
-} DIOCTL_SetFlowQosID;
-
-/*
- * Command: DIOCTL_SET_PACKET_TRACE_DATA
- * Description: Add verdict reason and tracing text to the packet associated with the DAQ message.
- * Argument: DIOCTL_SetPacketTraceData
- */
-typedef struct
-{
-    DAQ_Msg_h msg;              // [in] Message to add tracing data to
-    uint8_t verdict_reason;     // [in] Magic integer (0-255) reflecting the reason for the application's
-                                //  verdict on this message
-    uint32_t trace_data_len;    // [in] Tracing data length
-    uint8_t *trace_data;        // [in] Tracing data (ASCII text)
-} DIOCTL_SetPacketTraceData;
-
-/*
- * Command: DIOCTL_SET_PACKET_VERDICT_REASON
- * Description: Add verdict reason to the packet associated with the DAQ message.
- * Argument: DIOCTL_SetPacketVerdictReason
- */
-typedef struct
-{
-    DAQ_Msg_h msg;              // [in] Message to add verdict reason to
-    uint8_t verdict_reason;     // [in] Magic integer (0-255) reflecting the reason for the application's
-                                //  verdict on this message
-} DIOCTL_SetPacketVerdictReason;
-
-/*
- * Command: DIOCTL_SET_FLOW_PRESERVE
- * Description: Enable preserving the flow associated with the DAQ message when the
- *              application is unavailable.
- * Argument: DAQ_Msg_h (Message belonging to the flow to be modified)
- */
-
-/*
- * Command: DIOCTL_GET_FLOW_TCP_SCRUBBED_SYN
- * Description: Retrieve unmodified TCP options from the SYN for the flow associated with the DAQ message.
- * Argument: DIOCTL_GetFlowScrubbedTcp
- *
- * Command: DIOCTL_GET_FLOW_TCP_SCRUBBED_SYN_ACK
- * Description: Retrieve unmodified TCP options from the SYN-ACK for the flow associated with the DAQ message.
- * Argument: DIOCTL_GetFlowScrubbedTcp
- */
-typedef enum
-{
-    DAQ_TCP_OPTS_MSS_CHANGED = 0x01,
-    DAQ_TCP_OPTS_WIN_SCALE_CHANGED = 0x02,
-    DAQ_TCP_OPTS_SACK_CHANGED = 0x04,
-    DAQ_TCP_OPTS_TS_CHANGED = 0x08,
-} DAQ_TCP_Opts_flags_t;
-
-typedef struct _daq_tcp_opts
-{
-    uint8_t flags;                  // DAQ_TCP_OPTS_*
-    uint8_t window_scale;
-    uint16_t mss;
-    uint8_t window_scale_position;
-    uint8_t ts_position;
-    uint8_t mss_position;
-    uint8_t sack_ok_position;
-    uint32_t ts_value;
-} DAQ_TCP_Opts_t;
-
-typedef struct
-{
-    DAQ_Msg_h msg;              // [in] Message associated with the flow being queried
-    DAQ_TCP_Opts_t *tcp_opts;   // [out] Original TCP options prior to modification by the dataplane
-} DIOCTL_GetFlowScrubbedTcp;
-
-/*
- * Command: DIOCTL_CREATE_EXPECTED_FLOW
- * Description: Create an expected flow in the dataplane based on an N-tuple with some optional wildcards.
- * Argument: DIOCTL_CreateExpectedFlow
- */
-#define DAQ_EFLOW_TUNNEL_TYPE_NON_TUNNEL    0
-#define DAQ_EFLOW_TUNNEL_TYPE_GTP_TUNNEL    1
-#define DAQ_EFLOW_TUNNEL_TYPE_MPLS_TUNNEL   2
-#define DAQ_EFLOW_TUNNEL_TYPE_OTHER_TUNNEL  3
-typedef struct _daq_eflow_key
-{
-    uint16_t src_af;                /* AF_INET or AF_INET6 */
-    uint16_t dst_af;                /* AF_INET or AF_INET6 */
-    union
-    {
-        struct in_addr src_ip4;
-        struct in6_addr src_ip6;
-    } sa;
-    union
-    {
-        struct in_addr dst_ip4;
-        struct in6_addr dst_ip6;
-    } da;
-    uint8_t protocol;           /* TCP or UDP (IPPROTO_TCP or IPPROTO_UDP )*/
-    uint16_t src_port;          /* TCP/UDP source port */
-    uint16_t dst_port;          /* TCP/UDP destination port */
-    uint16_t address_space_id;  /* Address Space ID */
-    uint16_t tunnel_type;       /* Tunnel type (DAQ_DP_TUNNEL_TYPE_*) */
-    uint16_t vlan_id;           /* VLAN ID */
-    uint16_t vlan_cnots;        /* VLAN ID is a C-Tag (0x8100) rather than an S-Tag (0x8a88) */
-} DAQ_EFlow_Key_t;
-
-#define DAQ_EFLOW_FLOAT             0x01 /* the expected flow can float to a different reader */
-#define DAQ_EFLOW_ALLOW_MULTIPLE    0x02 /* allow multiple connections to use the same expected flow entry */
-#define DAQ_EFLOW_PERSIST           0x04 /* expected flow entry persists even if control channel terminates */
-typedef struct
-{
-    DAQ_Msg_h ctrl_msg;     // [in] Message containing the companion control channel packet
-    DAQ_EFlow_Key_t key;    // [in] Flow key describing the expected flow
-    unsigned flags;     /* DAQ_EFLOW_* flags*/
-    unsigned timeout_ms;/* timeout of the expected flow entry in milliseconds */
-    uint8_t* data;      /* [Future] opaque data blob to return with the expected flow */
-    unsigned length;    /* [Future] length of the opaque data blob */
-} DIOCTL_CreateExpectedFlow;
-
-/*
- * Command: DIOCTL_DIRECT_INJECT_PAYLOAD
- * Description: Directly inject L5 payload data on a flow relative to the reference message.  The module
- *              should handle any packetizing necessary to get the data onto the wire.
- * Argument: DIOCTL_DirectInjectPayload
- */
-typedef struct
-{
-    const uint8_t *data;
-    uint32_t length;
-} DAQ_DIPayloadSegment;
-
-typedef struct
-{
-    DAQ_Msg_h msg;                          // [in] Message belonging to the flow to be injected on
-    const DAQ_DIPayloadSegment **segments;  // [in] Array of data segments to be injected
-    uint8_t num_segments;                   // [in] Number of elements in the data segment array
-    uint8_t reverse;                        // [in] If non-zero, inject the data in the opposite direction
-                                            //      relative to the message
-} DIOCTL_DirectInjectPayload;
-
-/*
- * Command: DIOCTL_DIRECT_INJECT_RESET
- * Description: Directly inject an L4 reset on a flow relative to the reference message.  The module
- *              should handle any packet generation necessary to get the reset onto the wire.
- * Argument: DIOCTL_DirectInjectReset
- */
-#define DAQ_DIR_FORWARD 0   // Forward injection
-#define DAQ_DIR_REVERSE 1   // Reverse injection
-#define DAQ_DIR_BOTH    2   // Both forward and reverse injection
-typedef struct
-{
-    DAQ_Msg_h msg;      // [in] Message belonging to the flow to be injected on
-    uint8_t direction;  // [in] Direction in which to inject the reset relative to the message (DAQ_DIR_*)
-} DIOCTL_DirectInjectReset;
-
-#ifdef __cplusplus
-}
-#endif
+typedef struct _daq_module DAQ_Module_t;
 
 #endif /* _DAQ_COMMON_H */

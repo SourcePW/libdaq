@@ -1,12 +1,11 @@
 AUTOMAKE_OPTIONS = foreign
 
-include $(top_srcdir)/aminclude_static.am
-
-pkgconfig_DATA = libdaq.pc
-
 if BUILD_MODULES
-    MODULES_DIR = modules
+    MODULES_DIR = os-daq-modules
 endif
-SUBDIRS = api $(MODULES_DIR) example test
+SUBDIRS = api sfbpf $(MODULES_DIR)
 
 ACLOCAL_AMFLAGS = -I m4
+
+EXTRA_DIST = \
+daq.dsp
