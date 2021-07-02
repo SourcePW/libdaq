@@ -41,6 +41,9 @@ const DAQ_Module_t *static_modules[] =
 #ifdef BUILD_PCAP_MODULE
     &pcap_daq_module_data,
 #endif
+#ifdef BUILD_DPDK_MODULE
+    &dpdk_daq_module_data,
+#endif
 #ifdef BUILD_NETMAP_MODULE
     &netmap_daq_module_data,
 #endif
